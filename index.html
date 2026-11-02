@@ -4,133 +4,433 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<title>BioSig Phone Monitor</title>
+<meta name="description" content="Live ECG, EMG and EEG from the BioSig board over Bluetooth.">
+<title>BioSig Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d23a52'/%3E%3Cpath d='M4 17h7l2-5 3 11 3-14 2 8h7' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap" rel="stylesheet">
 <style>
-/* Layout: one column for a phone held upright; sticky header with the
-   connection state, controls, then the signal panels, then link stats. */
+/* ------------------------------------------------------------------
+   Tokens. The page takes the colour of the signal on screen:
+   ECG crimson (heart), EMG amber (muscle), EEG indigo (brain).
+   The trace area is chart paper: square boxes, dark trace, tinted grid.
+   ------------------------------------------------------------------ */
 :root {
-  --bg: #ffffff;        /* page and plots */
-  --panel: #fcfcfb;     /* raised surfaces */
-  --line: #e1e0d9;      /* hairlines and grid */
-  --frame: #c3c2b7;     /* plot frame */
-  --ink: #0b0b0b;       /* primary text */
-  --ink2: #52514e;      /* secondary text */
-  --muted: #898781;     /* labels */
-  --accent: #2a78d6;    /* controls, ECG trace */
-  --good: #0ca30c; --warn: #fab219; --bad: #d03b3b;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
-  --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --font: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #ffffff; --surface: #ffffff; --ink: #161a22; --ink2: #4a5160; --muted: #7b8392;
+  --line: #e1e5eb; --good: #12804c; --warn: #b87503; --bad: #c42b3b;
+  --ecg: #d23a52; --emg: #d0700d; --eeg: #5847c9;
+  --accent: #3b5b8c; --soft: #eaeff6; --paper: #ffffff; --gmaj: #d9dee7; --gmin: #eef1f5;
+  --shadow: 0 -1px 0 var(--line), 0 -8px 24px rgba(22, 26, 34, 0.06);
   color-scheme: light;
 }
+:root[data-mode="ecg"] { --accent: var(--ecg); --soft: #fbe9ec; --paper: #ffffff; --gmaj: #f2bcc5; --gmin: #fae4e8; }
+:root[data-mode="emg"] { --accent: var(--emg); --soft: #fcf0e2; --paper: #ffffff; --gmaj: #efcfa6; --gmin: #faeedd; }
+:root[data-mode="eeg"] { --accent: var(--eeg); --soft: #ecebfb; --paper: #ffffff; --gmaj: #cfcaf2; --gmin: #ecebfa; }
+:root[data-theme="dark"] {
+  --bg: #0e1116; --surface: #161a21; --ink: #e9ecf1; --ink2: #aab2bf; --muted: #7c8595;
+  --line: #262c36; --good: #3cc47f; --warn: #f0a92e; --bad: #ff6b78;
+  --ecg: #ff6b81; --emg: #ffa344; --eeg: #9d8fff;
+  --accent: #8fb0e6; --soft: #1d2533; --paper: #12151b; --gmaj: #2a303b; --gmin: #1a1e26;
+  --shadow: 0 -1px 0 var(--line), 0 -8px 24px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+:root[data-theme="dark"][data-mode="ecg"] { --accent: var(--ecg); --soft: #2c1a20; --paper: #151116; --gmaj: #4b2731; --gmin: #26181d; }
+:root[data-theme="dark"][data-mode="emg"] { --accent: var(--emg); --soft: #2c2117; --paper: #15130f; --gmaj: #4a3520; --gmin: #261d15; }
+:root[data-theme="dark"][data-mode="eeg"] { --accent: var(--eeg); --soft: #201e38; --paper: #121220; --gmaj: #34305c; --gmin: #1d1c31; }
+
 * { box-sizing: border-box; }
-[hidden] { display: none !important; }   /* the flex rules below must not un-hide */
-html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 var(--font); }
-body { padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px))
-                env(safe-area-inset-bottom, 0px) max(12px, env(safe-area-inset-left, 0px)); }
-.wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 18px; }
-header { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px 0 8px;
-         border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
-.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.brand { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.brand b { font-size: 17px; letter-spacing: 0.01em; }
-.brand span { color: var(--muted); font-size: 11.5px; }
-.pill { font: 600 11.5px var(--font); letter-spacing: 0.06em; padding: 3px 9px; border-radius: 999px;
-        color: #fff; background: var(--muted); white-space: nowrap; }
-.pill.good { background: var(--good); } .pill.warn { background: var(--warn); color: var(--ink); }
-.pill.bad { background: var(--bad); }
-button { font: 600 13.5px var(--font); border-radius: 9px; padding: 9px 13px; border: 1px solid var(--frame);
-         background: var(--bg); color: var(--ink); cursor: pointer; min-height: 40px; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:disabled { opacity: 0.45; cursor: default; }
-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
-.seg { display: inline-flex; border: 1px solid var(--frame); border-radius: 10px; overflow: hidden; }
-.seg button { border: 0; border-radius: 0; min-height: 36px; padding: 7px 12px; }
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
-.label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-.info { color: var(--ink2); font-size: 12.5px; min-width: 0; }
-.notice { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px;
-          color: var(--ink2); font-size: 13px; }
-.notice b { color: var(--ink); }
-.hr { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding: 4px 2px; }
-.hr .val { font: 700 54px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-.hr .val.dim { color: var(--muted); }
-.hr .unit { font-weight: 600; color: var(--ink2); }
-.hr .sub { color: var(--ink2); font: 12.5px var(--mono); }
-.chan { display: flex; flex-direction: column; gap: 3px; }
-.chan .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.chan .sw { width: 14px; height: 3px; border-radius: 2px; }
-.chan .nm { font-weight: 700; }
-.chan .ch { color: var(--muted); font-size: 12px; }
-.chan .rd { color: var(--ink2); font: 12px var(--mono); font-variant-numeric: tabular-nums; margin-left: auto; }
-.chan .fl { font-size: 10.5px; }
-canvas { display: block; width: 100%; border: 1px solid var(--frame); border-radius: 6px; background: var(--bg); }
-.card { display: flex; flex-direction: column; gap: 6px; }
-.card h2 { font-size: 13.5px; margin: 6px 0 0; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--ink2); }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-.bars { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
-.bars .n { font-size: 12px; color: var(--ink2); }
-.bar { display: flex; height: 22px; gap: 2px; min-width: 0; }
-.bar span { display: flex; align-items: center; justify-content: center; font: 700 10.5px var(--font);
-            color: #fff; overflow: hidden; white-space: nowrap; border-radius: 3px; }
-.bar em { font-style: normal; color: var(--muted); font-size: 11px; align-self: center; }
-footer { border-top: 1px solid var(--line); padding-top: 8px; color: var(--ink2);
-         font: 11.5px/1.6 var(--mono); font-variant-numeric: tabular-nums; }
-footer .bad { color: var(--bad); }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font: 400 15px/1.45 var(--font); font-variant-numeric: tabular-nums;
+       padding: 0 0 calc(84px + env(safe-area-inset-bottom, 0px)); min-height: 100vh; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+         -webkit-tap-highlight-color: transparent; }
+button:focus-visible, [tabindex]:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+         outline-offset: 2px; border-radius: 8px; }
+svg { display: block; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+
+/* ---------------------------------------------------------- top bar */
+.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 94%, transparent);
+       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+       padding-top: env(safe-area-inset-top, 0px); border-bottom: 1px solid var(--line); }
+.bar { display: flex; align-items: center; gap: 10px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 9px; margin-right: auto; min-width: 0; }
+.brand .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: #fff;
+               display: grid; place-items: center; transition: background-color .4s; }
+.brand b { font-weight: 760; font-stretch: 112%; font-size: 19px; letter-spacing: -0.01em; }
+.status { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px 0 10px;
+          border-radius: 999px; background: var(--surface); border: 1px solid var(--line);
+          font-size: 13px; font-weight: 600; color: var(--ink2); white-space: nowrap; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.status[data-s="good"] i { background: var(--good); box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 50%, transparent);
+                           animation: live 2s infinite; }
+.status[data-s="warn"] i { background: var(--warn); }
+.status[data-s="bad"] i  { background: var(--bad); }
+.status[data-s="bad"] { color: var(--bad); }
+@keyframes live { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 55%, transparent); }
+                  70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.iconbtn { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--ink2); }
+.iconbtn:active { background: var(--soft); }
+
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.mode { position: relative; display: flex; flex-direction: column; align-items: flex-start; padding: 6px 4px 11px 2px;
+        color: var(--muted); text-align: left; }
+.mode b { font-size: 17px; font-weight: 720; font-stretch: 105%; color: var(--ink2); line-height: 1.15; }
+.mode span { font-size: 12.5px; }
+.mode::after { content: ""; position: absolute; left: 2px; right: 6px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0;
+               background: var(--c); transform: scaleX(0); transform-origin: left; transition: transform .25s ease; }
+.mode[data-m="ecg"] { --c: var(--ecg); } .mode[data-m="emg"] { --c: var(--emg); } .mode[data-m="eeg"] { --c: var(--eeg); }
+.mode[aria-selected="true"] b { color: var(--c); }
+.mode[aria-selected="true"] span { color: var(--ink2); }
+.mode[aria-selected="true"]::after { transform: scaleX(1); }
+
+/* --------------------------------------------------------- welcome */
+.welcome { padding: 34px 0 10px; }
+.welcome h1 { font-size: 38px; line-height: 1.02; font-weight: 790; font-stretch: 84%; letter-spacing: -0.015em;
+              margin: 0 0 12px; max-width: 12ch; text-wrap: balance; }
+.welcome p.lead { color: var(--ink2); margin: 0 0 26px; max-width: 42ch; }
+.steps { list-style: none; margin: 0 0 28px; padding: 0; counter-reset: s; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 2px 12px; padding: 12px 0;
+            border-top: 1px solid var(--line); }
+.steps li:last-child { border-bottom: 1px solid var(--line); }
+.steps li::before { content: counter(s); grid-row: span 2; width: 30px; height: 30px; border-radius: 50%;
+                    display: grid; place-items: center; font-weight: 700; font-size: 14px;
+                    background: var(--soft); color: var(--accent); }
+.steps b { font-weight: 650; }
+.steps span { color: var(--ink2); font-size: 14px; }
+.cta { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { height: 48px; padding: 0 20px; border-radius: 14px; font-weight: 650; font-size: 15.5px;
+       display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.ghost { border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); }
+.btn:active { transform: translateY(1px); }
+.note { margin-top: 22px; padding: 12px 14px; border-left: 3px solid var(--warn); background: var(--surface);
+        border-radius: 0 10px 10px 0; color: var(--ink2); font-size: 14px; }
+.note b { color: var(--ink); }
+
+.waiting { padding: 60px 0 30px; text-align: center; color: var(--ink2); }
+.waiting svg { margin: 0 auto 18px; color: var(--accent); }
+.waiting h2 { color: var(--ink); font-size: 21px; font-weight: 700; margin: 0 0 6px; }
+.waiting p { margin: 0 auto; max-width: 36ch; font-size: 14px; }
+.waiting .trace path { stroke-dasharray: 120; stroke-dashoffset: 120; animation: draw 1.6s ease-in-out infinite; }
+@keyframes draw { to { stroke-dashoffset: -120; } }
+
+/* ------------------------------------------------------------ hero */
+.hero { padding: 18px 0 14px; }
+.metric { display: grid; grid-template-columns: auto 1fr; gap: 0 18px; align-items: end; }
+.num { display: flex; align-items: flex-start; gap: 6px; }
+.num .v { font-size: 96px; line-height: 0.82; font-weight: 820; font-stretch: 66%; letter-spacing: -0.025em;
+          color: var(--ink); }
+.num .v.dim { color: color-mix(in srgb, var(--muted) 55%, transparent); }
+.num .v.mid { font-size: 76px; }
+.heart { color: var(--accent); margin-top: 4px; transform-origin: 50% 60%; }
+.heart.dim { color: var(--line); }
+.heart.beat { animation: beat .32s ease-out; }
+@keyframes beat { 0% { transform: scale(1); } 30% { transform: scale(1.28); } 100% { transform: scale(1); } }
+.side { min-width: 0; padding-bottom: 2px; display: flex; flex-direction: column; gap: 3px; }
+.side .unit { font-weight: 650; font-size: 15px; }
+.side .sub { color: var(--ink2); font-size: 13.5px; }
+.spark { width: 100%; height: 38px; margin-top: 4px; }
+.meter { position: relative; height: 10px; border-radius: 5px; background: var(--soft); overflow: hidden; margin-top: 6px; }
+.meter i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 5px; background: var(--accent);
+           transition: width .35s ease; }
+.bandbar { margin-top: 16px; }
+.bandbar .track { display: flex; height: 30px; gap: 3px; }
+.bandbar .track span { border-radius: 6px; min-width: 3px; transition: flex-grow .4s ease; }
+.bandbar .keys { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 7px; font-size: 12.5px; color: var(--ink2); }
+.bandbar .keys div { display: flex; flex-direction: column; }
+.bandbar .keys b { font-size: 16px; font-weight: 720; color: var(--ink); }
+.bandbar .keys b i { font-style: normal; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+
+/* ----------------------------------------------------------- scope */
+.scopehead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+             padding: 6px 0 10px; }
+.chain { font-size: 13px; color: var(--ink2); min-width: 0; flex: 1 1 200px; }
+.chips { display: flex; gap: 8px; }
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.seg button { height: 32px; padding: 0 12px; border-radius: 9px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+.seg button[aria-pressed="true"] { background: var(--soft); color: var(--accent); }
+.paper { margin: 0 -16px; background: var(--paper); border-block: 1px solid var(--gmaj); }
+.paper canvas { display: block; width: 100%; }
+.caption { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+.tag { font-weight: 650; color: var(--warn); }
+
+.bands h3 { font-size: 15px; font-weight: 680; margin: 18px 0 8px; }
+.bands h3:first-child { margin-top: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink2); margin-top: 8px; }
+.legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: 3px; }
+.rows { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; }
+.rows .n { font-size: 13px; font-weight: 600; color: var(--ink2); display: flex; align-items: center; gap: 6px; }
+.rows .n i { width: 8px; height: 8px; border-radius: 50%; }
+.rows .bar { display: flex; height: 24px; gap: 2px; min-width: 0; }
+.rows .bar span { display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700;
+                  overflow: hidden; white-space: nowrap; border-radius: 4px; }
+.rows .bar em { font-style: normal; color: var(--muted); font-size: 12.5px; align-self: center; }
+
+/* ------------------------------------------------------------ link */
+.link { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 8px; align-items: center;
+        margin-top: 18px; padding: 14px 0 6px; border-top: 1px solid var(--line); }
+.link div { display: flex; flex-direction: column; min-width: 0; }
+.link b { font-size: 17px; font-weight: 700; }
+.link b.bad { color: var(--bad); }
+.link span { font-size: 12px; color: var(--muted); }
+.textbtn { color: var(--accent); font-weight: 650; font-size: 14px; padding: 8px 4px; }
+
+/* ------------------------------------------------------------ dock */
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); box-shadow: var(--shadow);
+        padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.dock .in { max-width: 760px; margin: 0 auto; display: grid; grid-template-columns: 1fr repeat(3, 58px); gap: 6px; align-items: center; }
+.dock .connect { height: 50px; border-radius: 15px; background: var(--accent); color: #fff; font-weight: 680; font-size: 16px;
+                 display: flex; align-items: center; justify-content: center; gap: 9px; transition: background-color .4s; }
+.dock .connect[data-on="true"] { background: var(--soft); color: var(--accent); }
+.tool { height: 50px; border-radius: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 3px; font-size: 11px; font-weight: 600; color: var(--ink2); }
+.tool:active, .tool[aria-pressed="true"] { background: var(--soft); color: var(--accent); }
+.tool:disabled { opacity: .35; }
+
+/* ----------------------------------------------------------- toast */
+.toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 30;
+         transform: translate(-50%, 12px); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+         width: max-content; max-width: min(92vw, 520px); background: var(--ink); color: var(--bg);
+         padding: 11px 16px; border-radius: 12px; font-size: 14px; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ----------------------------------------------------------- sheets */
+dialog.sheet { margin: auto auto 0; width: 100%; max-width: 560px; max-height: 88vh; border: 0; padding: 0;
+               border-radius: 22px 22px 0 0; background: var(--surface); color: var(--ink); overflow: auto; }
+dialog.sheet[open] { animation: up .26s cubic-bezier(.2, .8, .2, 1); }
+dialog.sheet::backdrop { background: rgba(10, 12, 16, 0.42); }
+@keyframes up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+.sheet .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 10px auto 0; }
+.sheet header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px 4px; }
+.sheet h2 { font-size: 21px; font-weight: 760; font-stretch: 95%; margin: 0; }
+.sheet section { padding: 10px 20px 14px; border-bottom: 1px solid var(--line); }
+.sheet section:last-child { border-bottom: 0; padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+.sheet h3 { font-size: 13.5px; font-weight: 650; color: var(--muted); margin: 6px 0 10px; }
+.opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.opt > span { font-weight: 550; }
+.opt small { display: block; color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.switch { width: 50px; height: 30px; border-radius: 15px; background: var(--line); position: relative; flex: none;
+          transition: background-color .2s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%;
+                 background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .2s; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(20px); }
+.rowbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.rowbtns .btn { height: 44px; font-size: 14.5px; padding: 0 16px; }
+.about { font-size: 13.5px; color: var(--ink2); margin: 0; }
+dl.facts { display: grid; grid-template-columns: 1fr auto; margin: 0; }
+dl.facts dt, dl.facts dd { padding: 10px 0; border-top: 1px solid var(--line); margin: 0; font-size: 14.5px; }
+dl.facts dt { color: var(--ink2); }
+dl.facts dd { font-weight: 650; text-align: right; }
+dl.facts dt:first-of-type, dl.facts dd:first-of-type { border-top: 0; }
+dl.facts dd.bad { color: var(--bad); }
+dl.facts dd.good { color: var(--good); }
+
+/* ------------------------------------------------- landscape / full screen */
+@media (orientation: landscape) and (max-height: 560px) {
+  body { padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+  .bar { height: 46px; }
+  .modes { position: absolute; top: env(safe-area-inset-top, 0px); left: 50%; transform: translateX(-50%);
+           width: min(420px, 46vw); }
+  .mode { padding: 4px 4px 8px; align-items: center; text-align: center; }
+  .mode span { display: none; }
+  .mode b { font-size: 15px; line-height: 2.2; }
+  .live { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 0 18px; }
+  .live > .hero { grid-column: 2; grid-row: 1 / span 3; padding-top: 10px; }
+  .live > .scope, .live > .bands { grid-column: 1; grid-row: 1; }
+  .live > .link { grid-column: 1; grid-row: 2; }
+  .metric { grid-template-columns: 1fr; gap: 10px; }
+  .num .v { font-size: 72px; } .num .v.mid { font-size: 58px; }
+  .bandbar .keys { grid-template-columns: repeat(3, 1fr); row-gap: 6px; }
+  .dock { padding-top: 7px; padding-bottom: calc(7px + env(safe-area-inset-bottom, 0px)); }
+  .dock .connect, .tool { height: 44px; }
+  .toast { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="row">
-      <div class="brand"><b>BioSig monitor</b><span>ADS1299 · VEGA AT1051 · Bluetooth</span></div>
-      <span id="state" class="pill">NOT CONNECTED</span>
-    </div>
-    <div class="row">
-      <button id="connect" class="primary" type="button">Connect board</button>
-      <button id="demo" type="button">Demo</button>
-      <button id="pause" type="button" aria-pressed="false">Pause</button>
-    </div>
-    <div class="row">
-      <div class="seg" role="group" aria-label="Signal">
-        <button id="m1" type="button" data-cmd="1" aria-pressed="false">ECG</button>
-        <button id="m2" type="button" data-cmd="2" aria-pressed="false">EMG</button>
-        <button id="m3" type="button" data-cmd="3" aria-pressed="false">EEG</button>
+<header class="top" id="top">
+  <div class="wrap">
+    <div class="bar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13h5l2-5 3 11 3-14 2 8h5"/></svg></span>
+        <b>BioSig</b>
       </div>
-      <div class="seg" role="group" aria-label="Output">
-        <button id="op" type="button" data-cmd="p" aria-pressed="false">Processed</button>
-        <button id="or" type="button" data-cmd="r" aria-pressed="false">Raw</button>
-      </div>
-      <div class="seg" role="group" aria-label="EEG view" id="eegview" hidden>
-        <button id="vt" type="button" aria-pressed="true">Traces</button>
-        <button id="vb" type="button" aria-pressed="false">Bands</button>
-      </div>
+      <button class="status" id="status" type="button" data-s="idle" aria-label="Connection status. Open device details"><i></i><span>Not connected</span></button>
+      <button class="iconbtn" id="openSettings" type="button" aria-label="Settings">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>
+      </button>
     </div>
-    <div id="info" class="info">Pair the board's Bluetooth module in Android settings, then tap Connect board.</div>
-  </header>
+    <nav class="modes" role="tablist" aria-label="Signal">
+      <button class="mode" role="tab" type="button" data-m="ecg" data-cmd="1" aria-selected="false"><b>ECG</b><span>Heart</span></button>
+      <button class="mode" role="tab" type="button" data-m="emg" data-cmd="2" aria-selected="false"><b>EMG</b><span>Muscle</span></button>
+      <button class="mode" role="tab" type="button" data-m="eeg" data-cmd="3" aria-selected="false"><b>EEG</b><span>Brain</span></button>
+    </nav>
+  </div>
+</header>
 
-  <div id="notice" class="notice" hidden></div>
-
-  <section id="hr" class="hr" hidden>
-    <span id="bpm" class="val dim">--</span><span class="unit">BPM</span>
-    <span id="rr" class="sub">waiting for beats</span>
+<main class="wrap">
+  <!-- not connected -->
+  <section class="welcome" id="welcome">
+    <h1>See your signals live</h1>
+    <p class="lead">ECG, EMG and EEG from the BioSig board, filtered on the chip and sent to this phone over Bluetooth.</p>
+    <ol class="steps">
+      <li><b>Power the board</b><span>The Bluetooth module's light blinks quickly while it waits.</span></li>
+      <li><b>Pair BIOSIG once</b><span>Android settings, Bluetooth, pair new device. PIN 1234.</span></li>
+      <li><b>Tap Connect board</b><span>Choose BIOSIG from the list. The signal starts in about a second.</span></li>
+    </ol>
+    <div class="cta">
+      <button class="btn primary" type="button" data-action="connect">Connect board</button>
+      <button class="btn ghost" type="button" data-demo="ecg">Try the demo</button>
+    </div>
+    <div class="note" id="nosupport" hidden><b>Bluetooth isn't available in this browser.</b> Use Chrome 137 or newer on Android, with this page opened from an https:// address. The demo works anywhere.</div>
   </section>
 
-  <section id="chans" class="card"></section>
-
-  <section id="bands" class="card" hidden>
-    <h2>Power spectral density</h2>
-    <canvas id="psd" height="230"></canvas>
-    <div id="psdleg" class="legend"></div>
-    <h2>Relative band power</h2>
-    <div class="legend" id="bandleg"></div>
-    <div id="bars" class="bars"></div>
+  <!-- connected, nothing decoded yet -->
+  <section class="waiting" id="waiting" hidden>
+    <svg class="trace" width="120" height="40" viewBox="0 0 120 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 22h34l6-12 8 26 8-32 6 18h54"/></svg>
+    <h2 id="waitTitle">Connected to BIOSIG</h2>
+    <p id="waitText">Waiting for the first data from the board. If nothing arrives in a few seconds, check that the board is running and the module is wired to Pmod JB.</p>
   </section>
 
-  <footer id="stats">—</footer>
-</div>
+  <!-- live -->
+  <div class="live" id="live" hidden>
+    <section class="hero" id="hero" aria-live="off">
+      <div class="metric" id="heroEcg" hidden>
+        <div class="num"><span class="v dim" id="bpm">--</span>
+          <svg class="heart dim" id="heart" width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.7 4.5c2.1 0 3.6 1.1 5.3 3 1.7-1.9 3.2-3 5.3-3 3.7 0 5.8 3.8 4.3 7.2C19.5 16.4 12 21 12 21z"/></svg></div>
+        <div class="side"><span class="unit">beats per minute</span><span class="sub" id="rr">Looking for beats</span>
+          <canvas class="spark" id="hrSpark" aria-hidden="true"></canvas><span class="sub" id="hrRange"></span></div>
+      </div>
+      <div class="metric" id="heroEmg" hidden>
+        <div class="num"><span class="v mid dim" id="rms">--</span></div>
+        <div class="side"><span class="unit" id="rmsUnit">RMS, last 0.25 s</span><span class="sub" id="ratio">Measuring resting level</span>
+          <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+          <canvas class="spark" id="emgSpark" aria-hidden="true"></canvas></div>
+      </div>
+      <div id="heroEeg" hidden>
+        <div class="metric">
+          <div class="num"><span class="v mid dim" id="alpha">--</span></div>
+          <div class="side"><span class="unit">Hz alpha peak</span><span class="sub" id="eegSub">Collecting 2 s of signal</span></div>
+        </div>
+        <div class="bandbar"><div class="track" id="bandTrack"></div><div class="keys" id="bandKeys"></div></div>
+      </div>
+    </section>
+
+    <section class="scope" id="scope">
+      <div class="scopehead">
+        <div class="chain" id="chain"></div>
+        <div class="chips">
+          <div class="seg" role="group" aria-label="EEG view" id="eegView" hidden>
+            <button type="button" id="vTraces" aria-pressed="true">Traces</button>
+            <button type="button" id="vBands" aria-pressed="false">Bands</button>
+          </div>
+          <div class="seg" role="group" aria-label="Output">
+            <button type="button" id="oProc" data-cmd="p" aria-pressed="false">Filtered</button>
+            <button type="button" id="oRaw" data-cmd="r" aria-pressed="false">Raw</button>
+          </div>
+        </div>
+      </div>
+      <div class="paper" id="paperBox"><canvas id="scopeCv" aria-label="Live signal"></canvas></div>
+      <div class="caption"><span id="boxText"></span><span class="tag" id="settle" hidden>Filters settling</span></div>
+    </section>
+
+    <section class="bands" id="bands" hidden>
+      <h3>Power spectrum</h3>
+      <div class="paper"><canvas id="psdCv" aria-label="Power spectrum"></canvas></div>
+      <div class="legend" id="psdLegend"></div>
+      <h3>Band power by channel</h3>
+      <div class="rows" id="bandRows"></div>
+    </section>
+
+    <section class="link" id="linkRow">
+      <div><b id="lRate">--</b><span>samples/s</span></div>
+      <div><b id="lLost">0</b><span>frames lost</span></div>
+      <div><b id="lMains">--</b><span>mains</span></div>
+      <button class="textbtn" type="button" data-sheet="device">Details</button>
+    </section>
+  </div>
+</main>
+
+<nav class="dock" id="dock" aria-label="Actions">
+  <div class="in">
+    <button class="connect" id="connect" type="button" data-action="connect" data-on="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>
+      <span>Connect board</span></button>
+    <button class="tool" id="pause" type="button" aria-pressed="false" disabled>
+      <svg id="pauseIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      <span id="pauseText">Pause</span></button>
+    <button class="tool" id="snap" type="button" disabled>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.4"/></svg>
+      <span>Snapshot</span></button>
+    <button class="tool" id="full" type="button">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      <span>Full</span></button>
+  </div>
+</nav>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<dialog class="sheet" id="settingsSheet" aria-labelledby="setTitle">
+  <div class="grab"></div>
+  <header><h2 id="setTitle">Settings</h2><button class="textbtn" type="button" data-close>Done</button></header>
+  <section>
+    <h3>Display</h3>
+    <div class="opt"><span>Drawing<small>Sweep redraws over the old trace, like a bedside monitor</small></span>
+      <div class="seg" data-key="view"><button type="button" data-val="sweep">Sweep</button><button type="button" data-val="scroll">Scroll</button></div></div>
+    <div class="opt"><span>Time on screen</span>
+      <div class="seg" data-key="win"><button type="button" data-val="2.5">2.5 s</button><button type="button" data-val="5">5 s</button><button type="button" data-val="10">10 s</button></div></div>
+    <div class="opt"><span>Grid</span>
+      <div class="seg" data-key="grid"><button type="button" data-val="paper">Chart paper</button><button type="button" data-val="plain">Plain</button></div></div>
+    <div class="opt"><span>Theme</span>
+      <div class="seg" data-key="theme"><button type="button" data-val="light">Light</button><button type="button" data-val="dark">Dark</button><button type="button" data-val="auto">Auto</button></div></div>
+  </section>
+  <section>
+    <h3>Sound and screen</h3>
+    <div class="opt"><span>Beat sound<small>A short tone on each heartbeat in ECG</small></span>
+      <button class="switch" type="button" role="switch" data-key="beep" aria-checked="false" aria-label="Beat sound"></button></div>
+    <div class="opt"><span>Keep screen on<small>While connected or playing the demo</small></span>
+      <button class="switch" type="button" role="switch" data-key="awake" aria-checked="true" aria-label="Keep screen on"></button></div>
+  </section>
+  <section>
+    <h3>Save</h3>
+    <div class="rowbtns">
+      <button class="btn ghost" type="button" id="saveCsv">Save last 10 s as CSV</button>
+      <button class="btn ghost" type="button" id="saveSnap">Save snapshot</button>
+    </div>
+  </section>
+  <section>
+    <h3>Demo recordings</h3>
+    <p class="about" style="margin-bottom:10px">Real recordings played through the same filters the board runs. No hardware needed.</p>
+    <div class="rowbtns">
+      <button class="btn ghost" type="button" data-demo="ecg">ECG</button>
+      <button class="btn ghost" type="button" data-demo="emg">EMG</button>
+      <button class="btn ghost" type="button" data-demo="eeg">EEG</button>
+      <button class="btn ghost" type="button" id="stopDemo" hidden>Stop demo</button>
+    </div>
+  </section>
+  <section>
+    <h3>About</h3>
+    <p class="about">BioSig monitor for the ADS1299 and VEGA AT1051 board. Works with firmware 20.02 and later, over an HC-05 or HC-06 module at 230400 baud. Needs Chrome 137 or newer on Android.</p>
+  </section>
+</dialog>
+
+<dialog class="sheet" id="deviceSheet" aria-labelledby="devTitle">
+  <div class="grab"></div>
+  <header><h2 id="devTitle">Device</h2><button class="textbtn" type="button" data-close>Done</button></header>
+  <section><dl class="facts" id="facts"></dl></section>
+  <section>
+    <div class="rowbtns"><button class="btn ghost" type="button" data-action="connect" id="devConnect">Connect board</button></div>
+  </section>
+</dialog>
 
 <script>
 // core.js -- protocol and signal analysis for the BioSig phone viewer.
@@ -470,31 +770,59 @@ const DEMO_STREAMS = {"ecg": "pVsAAT4AFAADAAAAAAAAAAASmSEAwAAAAQBgBwcAAFGlXQAHAA
 'use strict';
 const SPP_UUID = '00001101-0000-1000-8000-00805f9b34fb';
 const BAUD = 230400;
-const BUF = 10 * FS;                 // 10 s kept: 8 s for the heart rate, 10 s for spectra
-const WIN = 6 * FS;                  // 6 s on screen
-const TRACES = ['#2a78d6', '#eb6834', '#1baf7a', '#e87ba4', '#008300', '#6250d6'];
-const BAND_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4'];
-const BAND_INK = ['#fff', '#fff', '#fff', '#0b0b0b', '#fff'];
-const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const BUF = 10 * FS;                                    // 10 s kept (heart rate 8 s, spectra 10 s)
+const MKEY = { 0: 'ecg', 1: 'emg', 2: 'eeg', 3: 'eeg' };
+const CH_COLORS = ['#3a5cc7', '#d9720b', '#23935a', '#c2418a', '#7a5af0', '#0f8f8f'];
+const BAND_COLORS = ['#3a5cc7', '#1595ad', '#23935a', '#e0a316', '#cf3f5b'];   // low to high frequency
+const BAND_INK = ['#fff', '#fff', '#fff', '#1b1b1b', '#fff'];
+const BAND_NAME = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'];
+const CHAIN = {
+  ECG: 'Filtered on the chip: 0.5 Hz high-pass, mains notch that follows 50 Hz drift, wavelet denoising',
+  EMG: 'Filtered on the chip: 20 Hz high-pass, mains notch that follows 50 Hz drift, wavelet denoising',
+  EEG: 'Filtered on the chip: 0.5 to 120 Hz, mains notch that follows 50 Hz drift, wavelet denoising',
+};
 const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+function setText(el, t) { if (el.textContent !== t) el.textContent = t; }
 
-// ------------------------------------------------------------------ store
+// ----------------------------------------------------------- settings
+const DEF = { view: 'sweep', win: 5, grid: 'paper', theme: 'light', beep: false, awake: true };
+const CFG_KEY = 'biosig.cfg.v2';               // v2: light theme by default
+let CFG = (() => { try { return Object.assign({}, DEF, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')); } catch (_) { return Object.assign({}, DEF); } })();
+function saveCfg() { try { localStorage.setItem(CFG_KEY, JSON.stringify(CFG)); } catch (_) {} }
+
+let TK = {};
+function readTokens() {
+  const s = getComputedStyle(root);
+  for (const k of ['bg', 'surface', 'ink', 'ink2', 'muted', 'line', 'accent', 'soft', 'paper', 'gmaj', 'gmin', 'bad', 'warn'])
+    TK[k] = s.getPropertyValue('--' + k).trim();
+  TK.font = '"Archivo", system-ui, sans-serif';
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = TK.bg;
+}
+const darkMq = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  root.dataset.theme = CFG.theme === 'auto' ? (darkMq.matches ? 'dark' : 'light') : CFG.theme;
+  readTokens(); sparkDirty = true;
+}
+function applyMode(key) { if (root.dataset.mode !== key) { root.dataset.mode = key; readTokens(); } }
+darkMq.addEventListener('change', () => { if (CFG.theme === 'auto') applyTheme(); });
+
+// -------------------------------------------------------------- store
 const S = {
   parser: new Parser(), diag: null, dsp: null, mode: null, isProc: null,
   ring: Array.from({ length: NCH }, () => new Float32Array(BUF)), wr: 0, count: 0,
   settling: false, lastData: 0, rateT0: 0, rateN0: 0, fs: 0,
-  source: null,          // 'serial' | 'demo' | null
-  paused: false, frozen: null, frozenCount: 0, bandsView: false,
+  source: null, paused: false, bandsView: false,
 };
-function clearBuffers() { for (const r of S.ring) r.fill(0); S.wr = 0; S.count = 0; hrState = null; hrOk = 0; lastBands = []; }
+function clearBuffers() {
+  for (const r of S.ring) r.fill(0); S.wr = 0; S.count = 0;
+  hr = null; hrOk = 0; eeg = null; emg = null; trend.hr = []; trend.emg = []; beat.abs = null; beat.last = -1e9;
+  scales.forEach((s) => s.reset());
+}
 function ingest(bytes) {
   for (const p of S.parser.feed(bytes)) {
     if (p.kind === 'dsp') { S.dsp = p; continue; }
-    if (p.kind === 'diag') {
-      S.diag = p;
-      if (p.mode !== S.mode) { clearBuffers(); S.mode = p.mode; }
-      continue;
-    }
+    if (p.kind === 'diag') { S.diag = p; if (p.mode !== S.mode) { clearBuffers(); S.mode = p.mode; } continue; }
     if (p.proc !== S.isProc) { clearBuffers(); S.isProc = p.proc; }
     let ch = p.ch;
     if (p.proc) {
@@ -508,18 +836,18 @@ function ingest(bytes) {
     S.lastData = performance.now();
   }
 }
-// last n samples of channel k, oldest first
-function tail(k, n) {
+function tail(k, n) {                                   // last n samples, oldest first
   const avail = Math.min(S.count, BUF); n = Math.min(n, avail);
   const out = new Float64Array(n), r = S.ring[k];
   for (let i = 0; i < n; i++) out[i] = r[(S.wr - n + i + BUF) % BUF];
   return out;
 }
 
-// --------------------------------------------------------------- serial
+// ------------------------------------------------------- bluetooth serial
 let port = null, reader = null;
+const serialOk = () => 'serial' in navigator && window.isSecureContext;
 async function connect() {
-  if (!('serial' in navigator)) { showNotice(true); return; }
+  if (!serialOk()) { $('nosupport').hidden = false; toast('Bluetooth needs Chrome 137+ on Android and an https page. Try the demo.', 5000); return; }
   try {
     port = await navigator.serial.requestPort({
       allowedBluetoothServiceClassIds: [SPP_UUID],
@@ -528,26 +856,21 @@ async function connect() {
     await port.open({ baudRate: BAUD });
   } catch (e) {
     port = null;
-    setInfo(e && e.name === 'NotFoundError'
-      ? 'No module chosen. Pair it in Android Bluetooth settings first (PIN usually 1234), then try again.'
-      : 'Could not open the module: ' + (e && e.message ? e.message : e));
+    toast(e && e.name === 'NotFoundError'
+      ? 'No board chosen. Pair BIOSIG in Android Bluetooth settings first, then try again.'
+      : 'Could not open the board: ' + (e && e.message ? e.message : e), 6000);
     return;
   }
-  stopDemo(); resetSession('serial');
-  keepAwake();
+  stopDemo(); resetSession('serial'); keepAwake();
   readLoop();
 }
 async function readLoop() {
   while (port && port.readable && S.source === 'serial') {
     reader = port.readable.getReader();
     try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) ingest(value);
-      }
+      for (;;) { const { value, done } = await reader.read(); if (done) break; if (value) ingest(value); }
     } catch (e) {
-      setInfo('Bluetooth link lost (' + (e && e.message ? e.message : e) + '). Tap Connect board to reconnect.');
+      toast('Bluetooth link lost. Tap Connect board to reconnect.', 6000);
       break;
     } finally { try { reader.releaseLock(); } catch (_) {} }
   }
@@ -557,99 +880,167 @@ async function disconnect(userAsked) {
   S.source = null;
   try { if (reader) await reader.cancel(); } catch (_) {}
   try { if (port) await port.close(); } catch (_) {}
-  port = null; reader = null;
-  if (userAsked) setInfo('Disconnected.');
+  port = null; reader = null; releaseAwake();
+  if (userAsked) toast('Disconnected');
 }
+const CMD_MSG = { '1': 'Switching to ECG', '2': 'Switching to EMG', '3': 'Switching to EEG', p: 'Switching to filtered output', r: 'Switching to raw output' };
 async function sendCmd(c) {
   if (S.source === 'demo') { demoCommand(c); return; }
-  if (!port || !port.writable) { setInfo('Connect the board first.'); return; }
+  if (!port || !port.writable) { toast('Connect the board or start the demo first.'); return; }
   const w = port.writable.getWriter();
-  try { await w.write(new TextEncoder().encode(c)); } finally { w.releaseLock(); }
-  setInfo({ '1': 'Switching to ECG (about 0.3 s)…', '2': 'Switching to EMG (about 0.3 s)…',
-            '3': 'Switching to EEG (about 0.3 s)…', 'p': 'Requested processed output.', 'r': 'Requested raw output.' }[c]);
+  try { await w.write(new TextEncoder().encode(c)); toast(CMD_MSG[c], 1500); }
+  catch (e) { toast('Could not send to the board: ' + (e && e.message ? e.message : e)); }
+  finally { w.releaseLock(); }
 }
 let wakeLock = null;
-async function keepAwake() { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {} }
+async function keepAwake() { if (!CFG.awake || wakeLock) return; try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (_) {} }
+function releaseAwake() { try { if (wakeLock) wakeLock.release(); } catch (_) {} wakeLock = null; }
 
-// ----------------------------------------------------------------- demo
+// ---------------------------------------------------------------- demo
 const demo = { bytes: null, pos: 0, t0: 0, rate: 0, which: null, timer: null };
 function b64(s) { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
 function startDemo(which) {
-  if (S.source === 'serial') return;
+  if (S.source === 'serial') { toast('Disconnect the board to play the demo.'); return; }
   demo.which = which; demo.bytes = b64(DEMO_STREAMS[which]);
   const frames = new Parser().feed(demo.bytes).filter((p) => p.kind === 'data').length;
-  demo.rate = demo.bytes.length / (frames / FS);      // bytes per second at 500 frames/s
+  demo.rate = demo.bytes.length / (frames / FS);
   demo.pos = 0; demo.t0 = performance.now();
-  resetSession('demo');
+  resetSession('demo'); keepAwake();
   if (!demo.timer) demo.timer = setInterval(demoTick, 20);
-  setInfo('Demo: your recorded ' + which.toUpperCase() + ' played through the firmware 21.00 processing.');
 }
 function demoTick() {
   if (S.source !== 'demo') return;
   const due = Math.floor((performance.now() - demo.t0) / 1000 * demo.rate);
-  if (due > demo.pos) {
-    const end = Math.min(due, demo.bytes.length);
-    ingest(demo.bytes.subarray(demo.pos, end)); demo.pos = end;
-  }
+  if (due > demo.pos) { const end = Math.min(due, demo.bytes.length); ingest(demo.bytes.subarray(demo.pos, end)); demo.pos = end; }
   if (demo.pos >= demo.bytes.length) { demo.pos = 0; demo.t0 = performance.now(); S.parser = new Parser(); }
 }
-function stopDemo() { if (demo.timer) clearInterval(demo.timer); demo.timer = null; }
+function stopDemo() { if (demo.timer) clearInterval(demo.timer); demo.timer = null; if (S.source === 'demo') { S.source = null; releaseAwake(); } }
 function demoCommand(c) {
   if (c === '1') startDemo('ecg'); else if (c === '2') startDemo('emg'); else if (c === '3') startDemo('eeg');
-  else if (c === 'r') setInfo('The demo carries processed data only. Raw output is available from the board.');
+  else if (c === 'r') toast('The demo has filtered data only. Raw output comes from the board.');
 }
 function resetSession(src) {
-  S.source = src; S.parser = new Parser(); S.diag = null; S.dsp = null; S.mode = null; S.isProc = null;
+  S.source = src; S.parser = new Parser(); S.diag = null; S.dsp = null; S.mode = null; S.isProc = null; S.paused = false;
   S.rateT0 = performance.now(); S.rateN0 = 0; S.fs = 0; clearBuffers(); layoutKey = null;
 }
 
-// ------------------------------------------------------------- analysis
-let hrState = null, hrOk = 0, lastBands = [], tAnalysis = 0;
-function analyse(live, lsbMv) {
-  const isEcg = MODES[S.mode].name === 'ECG';
-  if (isEcg && live.length) {
-    const seg = tail(live[0], 8 * FS).map((v) => v * lsbMv);
-    const r = heartRate(seg);
+// ------------------------------------------------------------ analysis
+let hr = null, hrOk = 0, eeg = null, emg = null, tAnalysis = 0;
+const trend = { hr: [], emg: [] };
+const beat = { abs: null, rr: 0, last: -1e9 };
+let sparkDirty = true;
+function modeName() { return S.mode === null ? '' : MODES[S.mode].name; }
+function analyse(live, lsb) {
+  const name = modeName(), t = performance.now() / 1000;
+  if (name === 'ECG' && live.length) {
+    const seg = tail(live[0], 8 * FS).map((v) => v * lsb);
+    const r = heartRate(seg, FS);
     hrOk = r.bpm !== null ? hrOk + 1 : 0;
-    hrState = { bpm: hrOk >= 2 ? r.bpm : null, rrMs: r.rrMs, peaks: hrOk >= 2 ? r.peaks : [], n: seg.length, count: S.count };
+    const base = S.count - seg.length;
+    if (hrOk >= 2) {
+      hr = { bpm: r.bpm, rrMs: r.rrMs, peaks: r.peaks.map((i) => base + i), n: seg.length };
+      beat.abs = hr.peaks[hr.peaks.length - 1]; beat.rr = r.rrMs / 1000 * FS;
+      trend.hr.push([t, r.bpm]);
+    } else {
+      hr = { bpm: null, peaks: hrOk ? [] : [], n: seg.length };
+      if (hrOk === 0) beat.abs = null;
+    }
+    while (trend.hr.length && t - trend.hr[0][0] > 120) trend.hr.shift();
   }
-  if (bandsShown()) {
-    lastBands = live.map((c) => {
-      const x = tail(c, BUF).map((v) => v * lsbMv * 1000);       // uV
-      const w = welchPsd(x, FS, 1024);
+  if (name === 'EMG' && live.length) {
+    const x = tail(live[0], BUF).map((v) => v * lsb), W = FS / 4, rms = [];
+    for (let s0 = x.length % W; s0 + W <= x.length; s0 += W) {
+      let m = 0; for (let i = s0; i < s0 + W; i++) m += x[i]; m /= W;
+      let a = 0; for (let i = s0; i < s0 + W; i++) a += (x[i] - m) * (x[i] - m);
+      rms.push(Math.sqrt(a / W));
+    }
+    if (rms.length) {
+      const cur = rms[rms.length - 1], base = rms.length >= 8 ? percentile(rms, 10) : null;
+      emg = { rms: cur, ratio: base > 0 ? cur / base : null };
+      trend.emg.push([t, cur]);
+      while (trend.emg.length && t - trend.emg[0][0] > 60) trend.emg.shift();
+    }
+  }
+  if (name === 'EEG') {
+    const per = live.map((c) => {
+      const w = welchPsd(tail(c, BUF).map((v) => v * lsb * 1000), FS, 1024);   // uV
       return w ? { f: w.f, psd: w.psd, bp: bandPowers(w.f, w.psd) } : null;
     });
+    const ok = per.filter((p) => p && p.bp.reduce((a, v) => a + v, 0) > 0);    // flat channels left out
+    if (ok.length) {
+      const nb = ok[0].f.length, mean = new Float64Array(nb);
+      ok.forEach((p) => { for (let k = 0; k < nb; k++) mean[k] += p.psd[k] / ok.length; });
+      // alpha peak: a true local maximum inside 8-13 Hz, else none
+      let pk = -1, pv = -1;
+      for (let k = 1; k < nb - 1; k++) { const f = ok[0].f[k]; if (f >= 8 && f <= 13 && mean[k] > pv) { pv = mean[k]; pk = k; } }
+      let fpk = null;
+      if (pk > 0 && mean[pk] > mean[pk - 1] && mean[pk] > mean[pk + 1]) {
+        const a = mean[pk - 1], b = mean[pk], c = mean[pk + 1], d = a - 2 * b + c;
+        fpk = ok[0].f[pk] + (d < 0 ? 0.5 * (a - c) / d * (ok[0].f[1] - ok[0].f[0]) : 0);
+        if (fpk < 8 || fpk > 13) fpk = null;
+      }
+      const rel = [0, 0, 0, 0, 0];
+      ok.forEach((p) => { const tot = p.bp.reduce((s, v) => s + v, 0); if (tot > 0) p.bp.forEach((v, i) => { rel[i] += v / tot / ok.length; }); });
+      eeg = { per: per, rel: rel, alphaHz: fpk, nOk: ok.length };
+    } else eeg = { per: per, rel: null };
   }
 }
-function bandsShown() { return S.bandsView && S.mode !== null && MODES[S.mode].name === 'EEG'; }
+function bandsShown() { return S.bandsView && modeName() === 'EEG'; }
+
+// heart pulse locked to the detected beats (and an optional tone)
+let audio = null;
+function beepTone() {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+    o.frequency.value = 880; o.type = 'sine';
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.1);
+  } catch (_) {}
+}
+function pulseCheck() {
+  if (!hr || hr.bpm === null || beat.abs === null || !beat.rr) return;
+  const since = S.count - beat.abs, k = Math.floor(since / beat.rr);
+  if (k > 3) return;                                   // beats stopped arriving
+  const predicted = beat.abs + k * beat.rr;
+  if (predicted > beat.last + 0.5 * beat.rr) {
+    beat.last = predicted;
+    const h = $('heart'); h.classList.remove('beat'); void h.getBoundingClientRect(); h.classList.add('beat');
+    if (CFG.beep) beepTone();
+  }
+}
 
 // --------------------------------------------------------------- layout
-let layoutKey = null, panels = [], scales = [];
-function build(live) {
-  const box = $('chans'); box.innerHTML = ''; panels = []; scales = [];
-  const isEeg = MODES[S.mode].name === 'EEG';
-  const h = live.length > 1 ? 92 : 250;
-  live.forEach((c, k) => {
-    const [nm, chn] = channelName(c, S.mode, live);
-    const el = document.createElement('div'); el.className = 'chan';
-    el.innerHTML = `<div class="head"><i class="sw" style="background:${TRACES[k % TRACES.length]}"></i>` +
-      `<span class="nm">${nm}</span><span class="ch">${chn} · mV</span><span class="fl"></span>` +
-      `<span class="rd"></span></div><canvas height="${h}"></canvas>`;
-    box.appendChild(el);
-    panels.push({ c: c, cv: el.querySelector('canvas'), rd: el.querySelector('.rd'), fl: el.querySelector('.fl'), h: h });
-    scales.push(new StableScale());
-  });
-  $('hr').hidden = MODES[S.mode].name !== 'ECG';
-  $('eegview').hidden = !isEeg;
+let layoutKey = null, scales = [], liveNow = [], scopeH = 260;
+function buildLayout(live) {
+  liveNow = live; scales = live.map(() => new StableScale());
+  const name = modeName();
+  $('heroEcg').hidden = name !== 'ECG'; $('heroEmg').hidden = name !== 'EMG'; $('heroEeg').hidden = name !== 'EEG';
+  $('eegView').hidden = name !== 'EEG';
+  $('scope').querySelector('.paper').hidden = bandsShown();
+  $('scope').querySelector('.caption').hidden = bandsShown();
   $('bands').hidden = !bandsShown();
-  if (bandsShown()) {
-    $('psdleg').innerHTML = live.map((c, k) => `<span><i style="background:${TRACES[k % TRACES.length]}"></i>${channelName(c, S.mode, live)[0]}</span>`).join('');
-    $('bandleg').innerHTML = EEG_BANDS.map((b, i) => `<span><i style="background:${BAND_COLORS[i]}"></i>${b[1]} ${b[0]} ${b[2]}–${b[3]} Hz</span>`).join('');
-    $('bars').innerHTML = live.map((c) => `<span class="n">${channelName(c, S.mode, live)[0]}</span><div class="bar"></div>`).join('');
+  setText($('chain'), S.isProc ? CHAIN[name] : 'Raw output: straight from the ADS1299, no filtering');
+  if (name === 'EEG') {
+    const names = live.map((c) => channelName(c, S.mode, live));
+    $('psdLegend').innerHTML = names.map((n, k) => `<span><i style="background:${CH_COLORS[k % 6]}"></i>${n[0]} (${n[1]})</span>`).join('');
+    $('bandRows').innerHTML = names.map((n, k) => `<span class="n"><i style="background:${CH_COLORS[k % 6]}"></i>${n[0]}</span><div class="bar"></div>`).join('');
+    $('bandTrack').innerHTML = BAND_COLORS.map((c) => `<span style="background:${c};flex:1 1 0"></span>`).join('');
+    $('bandKeys').innerHTML = EEG_BANDS.map((b, i) => `<div title="${b[2]}–${b[3]} Hz"><b><i style="background:${BAND_COLORS[i]}"></i><span>--</span></b>${b[1]} ${BAND_NAME[i].toLowerCase()}</div>`).join('');
   }
+  sizeScope(); sparkDirty = true;
+}
+function sizeScope() {
+  const n = Math.max(1, liveNow.length), vh = innerHeight;
+  const land = innerWidth > innerHeight && vh < 560;
+  if (land) {
+    const used = $('top').offsetHeight + $('dock').offsetHeight + 96;
+    scopeH = Math.max(150, Math.round(vh - used));
+  } else if (n === 1) scopeH = Math.round(Math.min(380, Math.max(230, vh * 0.36)));
+  else scopeH = Math.round(Math.min(n * 108, Math.max(n * 62, vh * 0.56)));
 }
 function sizeCanvas(cv, h) {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth;
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth || cv.parentNode.clientWidth;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.height = h + 'px';
   }
@@ -658,210 +1049,426 @@ function sizeCanvas(cv, h) {
 }
 
 // --------------------------------------------------------------- drawing
-function drawTrace(p, y, lo, hi, color, peaks) {
-  const { g, w, h } = sizeCanvas(p.cv, p.h);
-  g.clearRect(0, 0, w, h);
-  const padL = 38, padB = 14, pw = w - padL - 4, ph = h - padB - 4;
-  g.font = '10px ' + css('--font'); g.fillStyle = css('--muted'); g.strokeStyle = css('--line'); g.lineWidth = 1;
-  for (let s = 0; s <= 6; s++) {                         // 1 s grid
-    const x = padL + pw * s / 6;
-    g.beginPath(); g.moveTo(x + 0.5, 4); g.lineTo(x + 0.5, 4 + ph); g.stroke();
-    if (h > 120 || p === panels[panels.length - 1]) {
-      g.textAlign = s === 0 ? 'left' : s === 6 ? 'right' : 'center';
-      g.fillText((s - 6) + ' s', s === 0 ? x - 4 : x, h - 2);
-    }
-  }
-  for (let q = 0; q <= 4; q++) {
-    const v = lo + (hi - lo) * q / 4, yy = 4 + ph - ph * q / 4;
-    g.beginPath(); g.moveTo(padL, yy + 0.5); g.lineTo(padL + pw, yy + 0.5); g.stroke();
-    if (q % 2 === 0) { g.textAlign = 'right'; g.fillText(+v.toPrecision(3), padL - 4, q === 4 ? yy + 9 : q === 0 ? yy - 2 : yy + 3); }
-  }
-  if (y.length < 2) return;
-  const n = y.length, x0 = padL + pw * (1 - n / WIN);
-  const sy = (v) => 4 + ph - (v - lo) / (hi - lo) * ph;
-  g.strokeStyle = color; g.lineWidth = 1.3; g.lineJoin = 'round'; g.beginPath();
-  const cols = Math.max(2, Math.floor(pw * n / WIN));
-  for (let c = 0; c < cols; c++) {                       // min/max per pixel column
-    const a = Math.floor(c * n / cols), b = Math.max(a + 1, Math.floor((c + 1) * n / cols));
-    let mn = Infinity, mx = -Infinity;
-    for (let i = a; i < b; i++) { if (y[i] < mn) mn = y[i]; if (y[i] > mx) mx = y[i]; }
-    const x = x0 + c * (pw * n / WIN) / cols;
-    if (c === 0) g.moveTo(x, sy(y[0]));
-    g.lineTo(x, sy(mn)); g.lineTo(x, sy(mx));
-  }
-  g.stroke();
-  if (peaks && peaks.length) {
-    g.fillStyle = css('--ink2');
-    for (const t of peaks) {
-      const x = padL + pw * (1 + t / 6);
-      if (x < padL) continue;
-      g.beginPath(); g.moveTo(x - 5, 8); g.lineTo(x + 5, 8); g.lineTo(x, 16); g.closePath(); g.fill();
-    }
-  }
+function niceUp(v) {                                    // 1, 2, 5 x 10^k at or above v
+  if (!(v > 0)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e;
 }
-function drawPsd(live) {
-  const cv = $('psd'), { g, w, h } = sizeCanvas(cv, 230);
+function ampLabel(mv, eegUnits) {
+  if (eegUnits || Math.abs(mv) < 1) { const u = mv * 1000; return (u >= 10 ? u.toFixed(0) : +u.toPrecision(2)) + ' µV'; }
+  return +mv.toPrecision(3) + ' mV';
+}
+function drawScope(lsb, fsMv, now) {
+  const cv = $('scopeCv'), { g, w, h } = sizeCanvas(cv, scopeH);
+  g.fillStyle = TK.paper; g.fillRect(0, 0, w, h);
+  const live = liveNow, n = live.length, laneH = h / n, name = modeName();
+  const WIN = Math.round(CFG.win * FS), sweep = CFG.view === 'sweep';
+  const pxBox = w * 0.2 / CFG.win, paper = CFG.grid === 'paper';
+  const minor = paper && pxBox / 5 >= 3.5;
+  // time grid (fixed to the paper, so sweep mode keeps it still)
+  const vline = (x, col, lw) => { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); g.moveTo(Math.round(x) + 0.5, 0); g.lineTo(Math.round(x) + 0.5, h); g.stroke(); };
+  const nb = Math.round(CFG.win / 0.2);
+  if (minor) for (let i = 0; i < nb * 5; i++) if (i % 5) vline(i * pxBox / 5, TK.gmin, 1);
+  if (paper) for (let i = 0; i <= nb; i++) vline(i * pxBox, TK.gmaj, i % 5 === 0 ? 1.6 : 1);
+  else for (let i = 0; i <= nb; i += 5) vline(i * pxBox, TK.line, 1);
+
+  const ys = [];
+  g.font = '600 11px ' + TK.font;
+  for (let k = 0; k < n; k++) {
+    const top = k * laneH, mid = top + laneH / 2;
+    const cnt = sweep ? WIN - Math.max(40, Math.round(WIN * 0.035)) : WIN;
+    const y = tail(live[k], cnt).map((v) => v * lsb);
+    ys.push(y);
+    let lo = -1, hi = 1, vbox = 1;
+    if (y.length >= 2) {
+      const sc = scales[k]; sc.update(y, now / 1000);
+      const span = sc.hi - sc.lo, c = 0.5 * (sc.hi + sc.lo), boxes = laneH / pxBox;
+      vbox = niceUp(span / boxes);
+      lo = c - vbox * boxes / 2; hi = c + vbox * boxes / 2;
+    }
+    // amplitude grid: square boxes centred on the lane
+    g.save(); g.beginPath(); g.rect(0, top, w, laneH); g.clip();
+    const hline = (yy, col, lw) => { g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); g.moveTo(0, Math.round(yy) + 0.5); g.lineTo(w, Math.round(yy) + 0.5); g.stroke(); };
+    if (paper) {
+      const m = Math.ceil(laneH / 2 / pxBox) + 1;
+      if (minor) for (let j = -m * 5; j <= m * 5; j++) if (j % 5) hline(mid + j * pxBox / 5, TK.gmin, 1);
+      for (let j = -m; j <= m; j++) hline(mid + j * pxBox, TK.gmaj, j % 5 === 0 ? 1.6 : 1);
+    } else hline(mid, TK.line, 1);
+    // trace
+    if (y.length >= 2) {
+      const base = S.count - y.length;
+      const X = sweep ? (a) => ((a % WIN) / WIN) * w : (a) => w * (1 - (S.count - 1 - a) / (WIN - 1));
+      const Y = (v) => top + laneH - (v - lo) / (hi - lo) * laneH;
+      g.strokeStyle = TK.ink; g.lineWidth = n > 1 ? 1.15 : 1.5; g.lineJoin = 'round'; g.beginPath();
+      let col = -1, mn = 0, mx = 0, px = -1, first = true;
+      const flush = () => { if (col < 0) return; const yl = Y(mn), yh = Y(mx);
+        if (first) { g.moveTo(col, yl); first = false; } g.lineTo(col, yl); if (yh !== yl) g.lineTo(col, yh); };
+      for (let i = 0; i < y.length; i++) {
+        const x = X(base + i), cx = Math.floor(x);
+        if (cx !== col) {
+          flush();
+          if (x < px) first = true;                    // sweep wrap: lift the pen
+          col = cx; mn = mx = y[i]; px = x;
+        } else { if (y[i] < mn) mn = y[i]; if (y[i] > mx) mx = y[i]; }
+      }
+      flush(); g.stroke();
+      // write head
+      const hx = X(S.count - 1), hy = Y(y[y.length - 1]);
+      g.fillStyle = TK.accent; g.beginPath(); g.arc(hx, hy, 3.2, 0, 2 * Math.PI); g.fill();
+      g.globalAlpha = 0.18; g.beginPath(); g.arc(hx, hy, 8, 0, 2 * Math.PI); g.fill(); g.globalAlpha = 1;
+      // beat marks
+      if (k === 0 && name === 'ECG' && hr && hr.peaks.length) {
+        g.fillStyle = TK.accent;
+        for (const a of hr.peaks) {
+          if (a < base) continue;
+          const x = X(a);
+          g.beginPath(); g.moveTo(x - 5, top + 6); g.lineTo(x + 5, top + 6); g.lineTo(x, top + 13); g.closePath(); g.fill();
+        }
+      }
+    }
+    // lane label and flags
+    if (n > 1) {
+      const [nm, chn] = channelName(live[k], S.mode, live);
+      const label = nm + '  ' + chn, right = ampLabel(vbox, name === 'EEG') + ' per box';
+      g.textBaseline = 'top';
+      const lw = g.measureText(label).width, rw = g.measureText(right).width;
+      g.fillStyle = TK.paper; g.globalAlpha = 0.85; g.fillRect(4, top + 3, lw + 22, 17); g.fillRect(w - rw - 12, top + 3, rw + 8, 17); g.globalAlpha = 1;
+      g.fillStyle = CH_COLORS[k % 6]; g.beginPath(); g.arc(13, top + 11, 4, 0, 2 * Math.PI); g.fill();
+      g.fillStyle = TK.ink2; g.textAlign = 'left'; g.fillText(label, 22, top + 5);
+      g.fillStyle = TK.muted; g.textAlign = 'right'; g.fillText(right, w - 8, top + 5);
+    }
+    if (y.length >= FS) {
+      let lmn = Infinity, lmx = -Infinity, amax = 0;
+      for (let i = y.length - FS; i < y.length; i++) { const v = y[i]; if (v < lmn) lmn = v; if (v > lmx) lmx = v; amax = Math.max(amax, Math.abs(v)); }
+      const flag = lmx === lmn ? 'Flat signal' : amax >= 0.99 * fsMv ? 'Clipped' : '';
+      if (flag) {
+        g.font = '700 11.5px ' + TK.font; g.textBaseline = 'top'; g.textAlign = 'right';
+        const fw = g.measureText(flag).width, fy = top + (n > 1 ? 22 : 6);
+        g.fillStyle = TK.bad; g.fillRect(w - fw - 18, fy, fw + 12, 18);
+        g.fillStyle = '#fff'; g.fillText(flag, w - 12, fy + 3); g.font = '600 11px ' + TK.font;
+      }
+    }
+    g.restore();
+    if (n > 1 && k > 0) { g.strokeStyle = TK.gmaj; g.lineWidth = 2; g.beginPath(); g.moveTo(0, top); g.lineTo(w, top); g.stroke(); }
+    if (k === 0) scope0Box = vbox;
+  }
+  const t = n > 1 ? `Each box is 0.2 s wide. Heights are marked on each channel.`
+                  : `Each box is 0.2 s wide and ${ampLabel(scope0Box, false)} tall.`;
+  setText($('boxText'), t);
+}
+let scope0Box = 1;
+
+function drawSpark(cv, pts, fmtRange) {
+  const { g, w, h } = sizeCanvas(cv, 38);
   g.clearRect(0, 0, w, h);
-  const padL = 44, padB = 20, pw = w - padL - 8, ph = h - padB - 22;
-  let pmax = 0, pmin = Infinity;
-  for (const b of lastBands) if (b) for (let k = 0; k < b.f.length; k++) if (b.f[k] >= 0.5 && b.f[k] <= 60 && b.psd[k] > 0) {
-    pmax = Math.max(pmax, b.psd[k]); pmin = Math.min(pmin, b.psd[k]);
-  }
-  g.font = '10px ' + css('--font');
-  const sx = (f) => padL + pw * f / 60;
-  EEG_BANDS.forEach((b, i) => {                           // band shading and symbols
-    if (i % 2 === 0) { g.fillStyle = '#f0efec'; g.fillRect(sx(b[2]), 22, sx(b[3]) - sx(b[2]), ph); }
-    g.fillStyle = css('--ink2'); g.textAlign = 'center'; g.font = '600 12px ' + css('--font');
-    g.fillText(b[1], (sx(b[2]) + sx(b[3])) / 2, 16);
+  if (pts.length < 2) return;
+  const t1 = pts[pts.length - 1][0], span = Math.max(10, Math.min(fmtRange.span, t1 - pts[0][0]));
+  let lo = Infinity, hi = -Infinity; for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+  const pad = Math.max((hi - lo) * 0.15, fmtRange.minPad);
+  lo -= pad; hi += pad;
+  const X = (t) => w - 4 - (t1 - t) / span * (w - 8), Y = (v) => h - 3 - (v - lo) / (hi - lo) * (h - 6);
+  g.strokeStyle = TK.line; g.lineWidth = 1; g.beginPath(); g.moveTo(0, h - 0.5); g.lineTo(w, h - 0.5); g.stroke();
+  g.strokeStyle = TK.accent; g.lineWidth = 1.8; g.lineJoin = 'round'; g.beginPath();
+  pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); g.stroke();
+  const l = pts[pts.length - 1]; g.fillStyle = TK.accent; g.beginPath(); g.arc(X(l[0]), Y(l[1]), 3, 0, 2 * Math.PI); g.fill();
+}
+
+function drawPsd() {
+  const cv = $('psdCv'), { g, w, h } = sizeCanvas(cv, 240);
+  g.fillStyle = TK.paper; g.fillRect(0, 0, w, h);
+  const padL = 46, padR = 10, padT = 24, padB = 22, pw = w - padL - padR, ph = h - padT - padB, FMAX = 60;
+  const sx = (f) => padL + pw * f / FMAX;
+  g.font = '600 12px ' + TK.font; g.textBaseline = 'alphabetic';
+  EEG_BANDS.forEach((b, i) => {
+    g.globalAlpha = 0.10; g.fillStyle = BAND_COLORS[i]; g.fillRect(sx(b[2]), padT, sx(b[3]) - sx(b[2]), ph); g.globalAlpha = 1;
+    g.fillStyle = BAND_COLORS[i]; g.textAlign = 'center'; g.fillText(b[1], (sx(b[2]) + sx(b[3])) / 2, 16);
   });
-  g.font = '10px ' + css('--font');
-  g.strokeStyle = css('--line'); g.fillStyle = css('--muted');
-  for (let f = 0; f <= 60; f += 10) {
-    g.beginPath(); g.moveTo(sx(f) + 0.5, 22); g.lineTo(sx(f) + 0.5, 22 + ph); g.stroke();
-    g.textAlign = f === 60 ? 'right' : 'center'; g.fillText(f + (f === 60 ? ' Hz' : ''), f === 60 ? sx(f) + 4 : sx(f), h - 5);
+  g.font = '500 10.5px ' + TK.font; g.fillStyle = TK.muted; g.strokeStyle = TK.gmaj; g.lineWidth = 1;
+  for (let f = 0; f <= FMAX; f += 10) {
+    g.beginPath(); g.moveTo(Math.round(sx(f)) + 0.5, padT); g.lineTo(Math.round(sx(f)) + 0.5, padT + ph); g.stroke();
+    g.textAlign = f === FMAX ? 'right' : 'center'; g.fillText(f + (f === FMAX ? ' Hz' : ''), f === FMAX ? sx(f) + 6 : sx(f), h - 6);
   }
-  if (!(pmax > 0)) { g.textAlign = 'center'; g.fillText('collecting…', padL + pw / 2, 22 + ph / 2); return; }
+  const per = eeg && eeg.per ? eeg.per : [];
+  let pmax = 0, pmin = Infinity;
+  for (const b of per) if (b) for (let k = 0; k < b.f.length; k++) if (b.f[k] >= 0.5 && b.f[k] <= FMAX && b.psd[k] > 0) { pmax = Math.max(pmax, b.psd[k]); pmin = Math.min(pmin, b.psd[k]); }
+  if (!(pmax > 0)) { g.textAlign = 'center'; g.fillText('Collecting 2 s of signal', padL + pw / 2, padT + ph / 2); return; }
   const top = Math.log10(pmax * 3), bot = Math.log10(Math.max(pmin * 0.5, pmax * 1e-6));
-  const sy = (v) => 22 + ph - (Math.log10(Math.max(v, 1e-12)) - bot) / (top - bot) * ph;
+  const sy = (v) => padT + ph - (Math.log10(Math.max(v, 1e-12)) - bot) / (top - bot) * ph;
   g.textAlign = 'right';
   for (let e = Math.ceil(bot); e <= Math.floor(top); e++) {
-    const yy = sy(Math.pow(10, e));
-    g.strokeStyle = css('--line'); g.beginPath(); g.moveTo(padL, yy + 0.5); g.lineTo(padL + pw, yy + 0.5); g.stroke();
-    g.fillText('1e' + e, padL - 4, yy + 3);
+    const yy = Math.round(sy(Math.pow(10, e))) + 0.5;
+    g.beginPath(); g.moveTo(padL, yy); g.lineTo(padL + pw, yy); g.stroke();
+    g.fillText(e === 0 ? '1' : e === 1 ? '10' : '10' + supers(e), padL - 6, yy + 3.5);
   }
-  g.save(); g.translate(10, 22 + ph / 2); g.rotate(-Math.PI / 2); g.textAlign = 'center'; g.fillText('µV²/Hz', 0, 0); g.restore();
-  lastBands.forEach((b, k) => {
+  g.save(); g.translate(11, padT + ph / 2); g.rotate(-Math.PI / 2); g.textAlign = 'center'; g.fillText('µV²/Hz', 0, 0); g.restore();
+  per.forEach((b, k) => {
     if (!b) return;
-    g.strokeStyle = TRACES[k % TRACES.length]; g.lineWidth = 1.5; g.beginPath();
+    g.strokeStyle = CH_COLORS[k % 6]; g.lineWidth = 1.6; g.beginPath();
     let first = true;
     for (let i = 0; i < b.f.length; i++) {
-      if (b.f[i] < 0.5 || b.f[i] > 60) continue;
+      if (b.f[i] < 0.5 || b.f[i] > FMAX) continue;
       const x = sx(b.f[i]), yy = sy(b.psd[i]);
       if (first) { g.moveTo(x, yy); first = false; } else g.lineTo(x, yy);
     }
     g.stroke();
   });
 }
-function drawBars() {
-  const rows = $('bars').querySelectorAll('.bar');
-  lastBands.forEach((b, k) => {
+function supers(e) { const m = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' }; return String(e).split('').map((c) => m[c]).join(''); }
+function drawBandRows() {
+  const rows = $('bandRows').querySelectorAll('.bar');
+  (eeg && eeg.per ? eeg.per : []).forEach((b, k) => {
     const el = rows[k]; if (!el) return;
     const tot = b ? b.bp.reduce((a, v) => a + v, 0) : 0;
-    if (!(tot > 0)) { el.innerHTML = '<em>no signal</em>'; return; }
+    if (!(tot > 0)) { el.innerHTML = '<em>No signal</em>'; return; }
     el.innerHTML = b.bp.map((v, i) => {
       const pc = 100 * v / tot;
-      return `<span style="flex:${pc} 1 0;background:${BAND_COLORS[i]};color:${BAND_INK[i]}">${pc >= 12 ? EEG_BANDS[i][1] + ' ' + pc.toFixed(0) + '%' : ''}</span>`;
+      return `<span style="flex:${pc} 1 0;background:${BAND_COLORS[i]};color:${BAND_INK[i]}">${pc >= 13 ? EEG_BANDS[i][1] + ' ' + pc.toFixed(0) + '%' : ''}</span>`;
     }).join('');
   });
 }
-const fmt = (v) => Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) >= 10 ? v.toFixed(2) : v.toFixed(3);
-const fmtP = (v) => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
 
-// ------------------------------------------------------------- frame loop
+// ------------------------------------------------------------ hero text
+function renderHero() {
+  const name = modeName();
+  if (name === 'ECG') {
+    const v = $('bpm'), heart = $('heart');
+    if (hr && hr.bpm !== null) {
+      setText(v, hr.bpm.toFixed(0)); v.className = 'v'; heart.classList.remove('dim');
+      setText($('rr'), `${hr.peaks.length} beats in the last ${(hr.n / FS).toFixed(0)} s, ${hr.rrMs.toFixed(0)} ms apart`);
+    } else {
+      setText(v, '--'); v.className = 'v dim'; heart.classList.add('dim');
+      setText($('rr'), !hr || hr.n < 4 * FS ? 'Looking for beats' : 'Beats irregular or unclear. Check the electrodes.');
+    }
+    const pts = trend.hr;
+    if (pts.length >= 2) {
+      let lo = Infinity, hi = -Infinity; for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+      const mins = (pts[pts.length - 1][0] - pts[0][0]) / 60;
+      setText($('hrRange'), `${lo.toFixed(0)} to ${hi.toFixed(0)} bpm over the last ${mins >= 1 ? mins.toFixed(1) + ' min' : Math.round(mins * 60) + ' s'}`);
+    } else setText($('hrRange'), '');
+    drawSpark($('hrSpark'), pts, { span: 120, minPad: 3 });
+  } else if (name === 'EMG') {
+    const v = $('rms');
+    if (emg) {
+      const uv = emg.rms < 1;
+      setText(v, uv ? (emg.rms * 1000).toFixed(emg.rms * 1000 >= 100 ? 0 : 1) : emg.rms.toFixed(2)); v.className = 'v mid';
+      setText($('rmsUnit'), (uv ? 'µV' : 'mV') + ' RMS, last 0.25 s');
+      if (emg.ratio !== null) {
+        setText($('ratio'), emg.ratio < 1.6 ? 'At resting level' : `${emg.ratio.toFixed(1)} times the resting level`);
+        $('meter').style.width = Math.min(100, Math.max(2, Math.log(Math.max(1, emg.ratio)) / Math.log(20) * 100)) + '%';
+      } else setText($('ratio'), 'Measuring resting level');
+    }
+    drawSpark($('emgSpark'), trend.emg, { span: 60, minPad: 0.001 });
+  } else if (name === 'EEG') {
+    const v = $('alpha');
+    if (eeg && eeg.rel) {
+      const best = eeg.rel.indexOf(Math.max.apply(null, eeg.rel)), flat = eeg.per.length - eeg.nOk;
+      if (eeg.alphaHz !== null) { setText(v, eeg.alphaHz.toFixed(1)); v.className = 'v mid'; }
+      else { setText(v, '--'); v.className = 'v mid dim'; }
+      setText($('eegSub'), (eeg.alphaHz === null ? 'No clear alpha peak. ' : '') +
+        `Strongest band: ${BAND_NAME[best].toLowerCase()}, over ${eeg.nOk} channel${eeg.nOk > 1 ? 's' : ''}` + (flat ? ` (${flat} flat left out)` : ''));
+      const spans = $('bandTrack').children, keys = $('bandKeys').querySelectorAll('b span');
+      eeg.rel.forEach((r, i) => { spans[i].style.flexGrow = Math.max(0.01, r * 100); setText(keys[i], (r * 100).toFixed(0) + '%'); });
+    } else { setText(v, '--'); v.className = 'v mid dim'; }
+  }
+}
+
+// ----------------------------------------------------------- frame loop
+let view = null, tLink = 0;
+function setView(v) {
+  if (v === view) return; view = v;
+  $('welcome').hidden = v !== 'welcome'; $('waiting').hidden = v !== 'waiting'; $('live').hidden = v !== 'live';
+  if (v !== 'live') applyMode(S.source === 'demo' && demo.which ? demo.which : 'none');
+}
 function frame() {
   requestAnimationFrame(frame);
-  const now = performance.now();
-  const d = S.diag;
-  setButtons();
-  if (!S.source) { setState('NOT CONNECTED', ''); return; }
-  if (!d) { setState(S.source === 'demo' ? 'DEMO' : 'WAITING', 'warn'); return; }
+  const now = performance.now(), d = S.diag;
+  syncControls();
+  if (!S.source) { setView('welcome'); setStatus('Not connected', 'idle'); return; }
+  if (!d) {
+    setView('waiting');
+    setText($('waitTitle'), S.source === 'demo' ? 'Starting the demo' : 'Connected to BIOSIG');
+    setStatus(S.source === 'demo' ? 'Demo' : 'Waiting for data', 'warn');
+    return;
+  }
+  setView('live');
+  applyMode(MKEY[S.mode]);
   const live = liveChannels(S.mode, d);
-  const key = S.mode + '|' + live.join(',') + '|' + bandsShown();
-  if (key !== layoutKey) { build(live); layoutKey = key; tAnalysis = 0; }
+  const key = S.mode + '|' + live.join(',') + '|' + bandsShown() + '|' + S.isProc + '|' + root.dataset.theme;
+  if (key !== layoutKey) { buildLayout(live); layoutKey = key; tAnalysis = 0; }
 
   const proc = !!S.isProc;
-  const lsbMv = (proc ? procUvPerLsb(S.mode) : uvPerCount(d.gain)) / 1000;
+  const lsb = (proc ? procUvPerLsb(S.mode) : uvPerCount(d.gain)) / 1000;
   const fsMv = proc ? PROC_XREF_MV[S.mode] : fullScaleMv(d.gain);
-  const name = MODES[S.mode].name;
-  const chain = proc ? { ECG: 'HP 0.5 Hz · notches · db4 L2', EMG: 'HP 20 Hz · notches · db4 L4',
-                         EEG: 'HP 0.5 / LP 120 Hz · notches · db4 L4' }[name] : 'raw, gain ' + d.gain;
-  $('info').textContent = `${name} · ${live.length} ch · ${chain}` +
-    (proc && S.dsp ? ` · mains ${S.dsp.mainsHz.toFixed(2)} Hz` : '') + ` · ±${fsMv.toFixed(0)} mV` +
-    (S.source === 'demo' ? ' · demo' : '');
 
-  if (S.paused) setState('PAUSED', 'warn');
-  else if (!(d.flags & 1)) setState('CHIP STARTING', 'warn');
-  else if (now - S.lastData > 1500) setState('NO DATA', 'bad');
-  else if (proc && S.settling) setState('SETTLING', 'warn');
-  else setState(S.source === 'demo' ? 'DEMO' : 'LIVE', 'good');
-
-  if (S.paused) return;
-  if (now - tAnalysis > 500) { tAnalysis = now; analyse(live, lsbMv); if (bandsShown()) { drawPsd(live); drawBars(); } }
-
-  panels.forEach((p, k) => {
-    const y = tail(p.c, WIN).map((v) => v * lsbMv);
-    let txt = '';
-    let lo = -1, hi = 1;
-    if (y.length >= 2) {
-      const sc = scales[k]; sc.update(y, now / 1000); lo = sc.lo; hi = sc.hi;
-      let mn = Infinity, mx = -Infinity; for (const v of y) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      txt = 'p-p ' + fmt(mx - mn);
-      const b = lastBands[k];
-      if (b) txt += `  α ${fmtP(b.bp[2])} β ${fmtP(b.bp[3])} γ ${fmtP(b.bp[4])} µV²`;
-      const last = y.slice(-FS);
-      let lmn = Infinity, lmx = -Infinity, amax = 0;
-      for (const v of last) { if (v < lmn) lmn = v; if (v > lmx) lmx = v; amax = Math.max(amax, Math.abs(v)); }
-      p.fl.innerHTML = lmx === lmn ? '<span class="pill bad">FLAT</span>'
-        : amax >= 0.99 * fsMv ? '<span class="pill bad">CLIPPED</span>' : '';
-    }
-    p.rd.textContent = txt;
-    let peaks = null;
-    if (k === 0 && name === 'ECG' && hrState && hrState.peaks.length) {
-      peaks = hrState.peaks.map((i) => (i - (hrState.n - 1) - (S.count - hrState.count)) / FS);
-    }
-    drawTrace(p, y, lo, hi, TRACES[k % TRACES.length], peaks);
-  });
-
-  if (name === 'ECG') {
-    const bpm = $('bpm');
-    if (hrState && hrState.bpm !== null) {
-      bpm.textContent = hrState.bpm.toFixed(0); bpm.className = 'val';
-      $('rr').textContent = `RR ${hrState.rrMs.toFixed(0)} ms · ${hrState.peaks.length} beats in ${(hrState.n / FS).toFixed(0)} s`;
-    } else {
-      bpm.textContent = '--'; bpm.className = 'val dim';
-      $('rr').textContent = !hrState || hrState.n < 4 * FS ? 'waiting for beats' : 'beats irregular or unclear';
-    }
-  }
+  if (S.paused) setStatus('Paused', 'warn');
+  else if (!(d.flags & 1)) setStatus('Chip starting', 'warn');
+  else if (now - S.lastData > 1500) setStatus('No data', 'bad');
+  else if (proc && S.settling) setStatus('Settling', 'warn');
+  else setStatus(S.source === 'demo' ? 'Demo' : 'Live', 'good');
+  $('settle').hidden = !(proc && S.settling);
 
   if (now - S.rateT0 > 2000) { S.fs = (S.count - S.rateN0) / ((now - S.rateT0) / 1000); S.rateT0 = now; S.rateN0 = S.count; }
-  const P = S.parser, x = S.dsp;
-  $('stats').innerHTML =
-    `${S.fs.toFixed(0)} samples/s · received ${S.count} · <span class="${P.lost ? 'bad' : ''}">lost ${P.lost}</span>` +
-    ` · checksum errors ${P.badSum}<br>chip ID ${d.devId.toString(16).toUpperCase()} · firmware ${d.version}` +
-    (x ? ` · FIFO peak ${x.fifoHw}/512 · self test ${x.selftestOk ? 'ok' : 'FAIL'}` : '') +
-    ` · frame errors ${d.frameErr} · re-inits ${d.recover}`;
+  if (now - tLink > 400) { tLink = now; renderLink(); if ($('deviceSheet').open) renderFacts(); }
+
+  if (S.paused) return;
+  if (now - tAnalysis > 500) {
+    tAnalysis = now; analyse(live, lsb); renderHero();
+    if (bandsShown()) { drawPsd(); drawBandRows(); }
+  }
+  if (modeName() === 'ECG') pulseCheck();
+  if (!bandsShown()) drawScope(lsb, fsMv, now);
+}
+function renderLink() {
+  setText($('lRate'), S.fs ? S.fs.toFixed(0) : '--');
+  const lost = S.parser.lost; setText($('lLost'), String(lost)); $('lLost').className = lost ? 'bad' : '';
+  setText($('lMains'), S.isProc && S.dsp ? S.dsp.mainsHz.toFixed(2) + ' Hz' : '--');
+}
+function renderFacts() {
+  const d = S.diag, x = S.dsp, P = S.parser, rows = [];
+  rows.push(['Source', S.source === 'serial' ? 'Bluetooth (BIOSIG)' : S.source === 'demo' ? 'Demo recording' : 'Not connected']);
+  if (d) {
+    const proc = !!S.isProc;
+    rows.push(['Signal', modeName() + ', ' + liveChannels(S.mode, d).length + ' channel' + (liveChannels(S.mode, d).length > 1 ? 's' : '')]);
+    rows.push(['Output', proc ? 'Filtered, 16-bit' : 'Raw, 24-bit, gain ' + d.gain]);
+    rows.push(['Input range', '±' + (proc ? PROC_XREF_MV[S.mode] : fullScaleMv(d.gain)).toFixed(0) + ' mV']);
+  }
+  rows.push(['Samples per second', S.fs ? S.fs.toFixed(0) : '--']);
+  rows.push(['Frames received', String(S.count)]);
+  rows.push(['Frames lost', String(P.lost), P.lost ? 'bad' : 'good']);
+  rows.push(['Checksum errors', String(P.badSum), P.badSum ? 'bad' : '']);
+  if (x && S.isProc) {
+    rows.push(['Mains frequency', x.mainsHz.toFixed(3) + ' Hz']);
+    rows.push(['Board buffer peak', x.fifoHw + ' of 512']);
+    rows.push(['Filter self-test', x.selftestOk ? 'Passed' : 'Failed', x.selftestOk ? 'good' : 'bad']);
+  }
+  if (d) {
+    rows.push(['Firmware', d.version]);
+    rows.push(['ADS1299 ID', '0x' + d.devId.toString(16).toUpperCase()]);
+    rows.push(['SPI frame errors', String(d.frameErr), d.frameErr ? 'bad' : '']);
+    rows.push(['Chip restarts', String(d.recover), d.recover ? 'bad' : '']);
+  }
+  const html = rows.map((r) => `<dt>${r[0]}</dt><dd class="${r[2] || ''}">${r[1]}</dd>`).join('');
+  if ($('facts').innerHTML !== html) $('facts').innerHTML = html;
 }
 
 // ------------------------------------------------------------------- UI
-function setState(t, cls) { const s = $('state'); if (s.textContent !== t) s.textContent = t; s.className = 'pill ' + cls; }
-function setInfo(t) { $('info').textContent = t; }
-function setButtons() {
-  const m = S.mode, ser = S.source === 'serial';
-  [['m1', 0], ['m2', 1], ['m3', 2]].forEach(([id, v]) => $(id).setAttribute('aria-pressed', String(m === v || (v === 2 && m === 3))));
-  $('op').setAttribute('aria-pressed', String(S.isProc === true));
-  $('or').setAttribute('aria-pressed', String(S.isProc === false));
-  $('connect').textContent = ser ? 'Disconnect' : 'Connect board';
-  $('demo').textContent = S.source === 'demo' ? 'Stop demo' : 'Demo';
-  $('demo').disabled = ser;
-  $('pause').textContent = S.paused ? 'Resume' : 'Pause';
-  $('vt').setAttribute('aria-pressed', String(!S.bandsView)); $('vb').setAttribute('aria-pressed', String(S.bandsView));
+let statusKey = '';
+function setStatus(t, s) {
+  const k = t + s; if (k === statusKey) return; statusKey = k;
+  const el = $('status'); el.dataset.s = s; el.querySelector('span').textContent = t;
 }
-function showNotice(force) {
-  const ok = 'serial' in navigator && window.isSecureContext;
-  if (ok && !force) return;
-  const n = $('notice'); n.hidden = false;
-  n.innerHTML = '<b>Bluetooth needs Chrome 137 or newer on Android</b>, with this page opened from an <b>https://</b> address. ' +
-    'Pair the board’s module (HC-05/HC-06, PIN usually 1234) in Android Bluetooth settings first. ' +
-    'The Demo button works anywhere and plays your recordings through the same display.';
+let toastTimer = null;
+function toast(msg, ms) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms || 3200);
 }
-$('connect').onclick = () => (S.source === 'serial' ? disconnect(true) : connect());
-$('demo').onclick = () => { if (S.source === 'demo') { stopDemo(); S.source = null; } else startDemo('ecg'); };
+function syncControls() {
+  const m = S.mode === null ? null : MKEY[S.mode], ser = S.source === 'serial', on = !!S.source;
+  document.querySelectorAll('.mode').forEach((b) => {
+    const sel = String(on && (m === b.dataset.m || (!m && S.source === 'demo' && demo.which === b.dataset.m)));
+    if (b.getAttribute('aria-selected') !== sel) b.setAttribute('aria-selected', sel);
+  });
+  const pr = (id, v) => { const e = $(id); if (e.getAttribute('aria-pressed') !== v) e.setAttribute('aria-pressed', v); };
+  pr('oProc', String(S.isProc === true)); pr('oRaw', String(S.isProc === false));
+  pr('vTraces', String(!S.bandsView)); pr('vBands', String(S.bandsView));
+  const c = $('connect'), label = ser ? 'Disconnect' : 'Connect board';
+  if (c.dataset.on !== String(ser)) { c.dataset.on = String(ser); c.querySelector('span').textContent = label; $('devConnect').textContent = label; }
+  const hasData = on && !!S.diag;
+  $('pause').disabled = !hasData; $('snap').disabled = !hasData;
+  pr('pause', String(S.paused)); setText($('pauseText'), S.paused ? 'Resume' : 'Pause');
+  $('stopDemo').hidden = S.source !== 'demo';
+}
+function syncSettings() {
+  document.querySelectorAll('.sheet .seg[data-key]').forEach((sg) => sg.querySelectorAll('button').forEach((b) =>
+    b.setAttribute('aria-pressed', String(String(CFG[sg.dataset.key]) === b.dataset.val))));
+  document.querySelectorAll('.switch[data-key]').forEach((s) => s.setAttribute('aria-checked', String(!!CFG[s.dataset.key])));
+}
+
+// save helpers
+function stamp() { const d = new Date(), p = (v) => String(v).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`; }
+function download(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function saveSnapshot() {
+  if (!S.diag) { toast('Nothing to save yet.'); return; }
+  const src = bandsShown() ? $('psdCv') : $('scopeCv'), dpr = window.devicePixelRatio || 1, head = 64 * dpr;
+  const out = document.createElement('canvas'); out.width = src.width; out.height = src.height + head;
+  const g = out.getContext('2d');
+  g.fillStyle = TK.surface; g.fillRect(0, 0, out.width, out.height);
+  g.drawImage(src, 0, head);
+  g.scale(dpr, dpr);
+  const name = modeName(); let title = name + (S.isProc ? ', filtered' : ', raw');
+  if (name === 'ECG' && hr && hr.bpm !== null) title += ', ' + hr.bpm.toFixed(0) + ' bpm';
+  if (name === 'EEG' && eeg && eeg.rel && eeg.alphaHz !== null) title += ', alpha peak ' + eeg.alphaHz.toFixed(1) + ' Hz';
+  g.fillStyle = TK.ink; g.font = '700 18px ' + TK.font; g.fillText(title, 14, 28);
+  g.fillStyle = TK.muted; g.font = '500 12.5px ' + TK.font;
+  g.fillText(new Date().toLocaleString() + (bandsShown() ? '' : '   ' + $('boxText').textContent), 14, 50);
+  out.toBlob((b) => { download(b, `biosig_${name.toLowerCase()}_${stamp()}.png`); toast('Snapshot saved'); }, 'image/png');
+}
+function saveCsv() {
+  if (!S.diag) { toast('Nothing to save yet.'); return; }
+  const live = liveChannels(S.mode, S.diag), name = modeName(), eegU = name === 'EEG';
+  const lsb = (S.isProc ? procUvPerLsb(S.mode) : uvPerCount(S.diag.gain)) / 1000 * (eegU ? 1000 : 1);
+  const cols = live.map((c) => tail(c, BUF)), n = cols[0].length;
+  const head = ['time_s'].concat(live.map((c) => channelName(c, S.mode, live)[0] + '_' + channelName(c, S.mode, live)[1] + (eegU ? '_uV' : '_mV')));
+  const lines = [head.join(',')];
+  for (let i = 0; i < n; i++) lines.push([((i - n + 1) / FS).toFixed(3)].concat(cols.map((c) => (c[i] * lsb).toFixed(eegU ? 3 : 6))).join(','));
+  download(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }), `biosig_${name.toLowerCase()}_${stamp()}.csv`);
+  toast(`Saved ${(n / FS).toFixed(0)} s of ${name} as CSV`);
+}
+async function toggleFull() {
+  try {
+    if (!document.fullscreenElement) {
+      await root.requestFullscreen({ navigationUI: 'hide' });
+      try { await screen.orientation.lock('landscape'); } catch (_) {}
+    } else { try { screen.orientation.unlock(); } catch (_) {} await document.exitFullscreen(); }
+  } catch (_) { toast('Full screen is not available here.'); }
+}
+
+// wiring
+document.querySelectorAll('[data-action="connect"]').forEach((b) => (b.onclick = () => {
+  if (S.source === 'serial') disconnect(true); else connect();
+  const ds = $('deviceSheet'); if (ds.open) ds.close();
+}));
+document.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = () => {
+  startDemo(b.dataset.demo); const ss = $('settingsSheet'); if (ss.open) ss.close();
+}));
+$('stopDemo').onclick = () => { stopDemo(); $('settingsSheet').close(); };
+document.querySelectorAll('[data-cmd]').forEach((b) => (b.onclick = () => {
+  if (!S.source) { toast('Connect the board or try the demo first.'); return; }
+  sendCmd(b.dataset.cmd);
+}));
+$('vTraces').onclick = () => { S.bandsView = false; };
+$('vBands').onclick = () => { S.bandsView = true; tAnalysis = 0; };
 $('pause').onclick = () => { S.paused = !S.paused; };
-document.querySelectorAll('[data-cmd]').forEach((b) => (b.onclick = () => sendCmd(b.dataset.cmd)));
-$('vt').onclick = () => { S.bandsView = false; };
-$('vb').onclick = () => { S.bandsView = true; tAnalysis = 0; };
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.source === 'serial') keepAwake(); });
-showNotice(false);
+$('snap').onclick = saveSnapshot; $('saveSnap').onclick = () => { $('settingsSheet').close(); saveSnapshot(); };
+$('saveCsv').onclick = saveCsv;
+$('full').onclick = toggleFull;
+$('openSettings').onclick = () => { syncSettings(); $('settingsSheet').showModal(); };
+$('status').onclick = () => { renderFacts(); $('deviceSheet').showModal(); };
+document.querySelectorAll('[data-sheet="device"]').forEach((b) => (b.onclick = $('status').onclick));
+document.querySelectorAll('dialog.sheet').forEach((dl) => {
+  dl.querySelector('[data-close]').onclick = () => dl.close();
+  dl.addEventListener('click', (e) => { if (e.target === dl) dl.close(); });       // tap outside
+});
+document.querySelectorAll('.sheet .seg[data-key] button').forEach((b) => (b.onclick = () => {
+  const k = b.parentNode.dataset.key; CFG[k] = k === 'win' ? parseFloat(b.dataset.val) : b.dataset.val; saveCfg(); syncSettings();
+  if (k === 'theme') applyTheme();
+  scales.forEach((s) => s.reset());
+}));
+document.querySelectorAll('.switch[data-key]').forEach((s) => (s.onclick = () => {
+  const k = s.dataset.key; CFG[k] = !CFG[k]; saveCfg(); syncSettings();
+  if (k === 'beep' && CFG.beep) beepTone();                      // unlocks audio on this tap
+  if (k === 'awake') { if (CFG.awake && S.source) keepAwake(); else releaseAwake(); }
+}));
+addEventListener('resize', () => { sizeScope(); sparkDirty = true; });
+document.addEventListener('fullscreenchange', () => setTimeout(sizeScope, 150));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.source) keepAwake(); });
+if (!serialOk()) $('nosupport').hidden = false;
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layoutKey = null; });
+applyTheme();
 requestAnimationFrame(frame);
 </script>
 </body>
